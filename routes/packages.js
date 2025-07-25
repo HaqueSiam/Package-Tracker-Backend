@@ -6,16 +6,19 @@ const Package = require('../models/Package');
 router.post('/update', async (req, res) => {
   const { package_id, status, lat, lon, timestamp, note, eta } = req.body;
 
+  // Validate required fields
   if (!package_id || !status || !timestamp) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
+
+  const parsedTimestamp = new Date(timestamp);
 
   const event = {
     status,
     lat,
     lon,
     note,
-    event_timestamp: new Date(timestamp),
+    event_timestamp: parsedTimestamp,
     received_at: new Date(),
   };
 
@@ -23,6 +26,7 @@ router.post('/update', async (req, res) => {
     let pkg = await Package.findOne({ package_id });
 
     if (!pkg) {
+      // New package
       pkg = new Package({
         package_id,
         current_status: status,
@@ -30,23 +34,34 @@ router.post('/update', async (req, res) => {
         lon,
         eta: eta ? new Date(eta) : null,
         events: [event],
-        last_updated: new Date(timestamp),
+        last_updated: parsedTimestamp,
       });
     } else {
-      if (new Date(timestamp) > new Date(pkg.last_updated)) {
+      // Check for duplicate (same timestamp + status)
+      const isDuplicate = pkg.events.some(
+        (e) =>
+          new Date(e.event_timestamp).getTime() === parsedTimestamp.getTime() &&
+          e.status === status
+      );
+
+      if (!isDuplicate) {
+        pkg.events.push(event);
+      }
+
+      // Only update current status if event is newer
+      if (parsedTimestamp > new Date(pkg.last_updated)) {
         pkg.current_status = status;
         pkg.lat = lat;
         pkg.lon = lon;
         pkg.eta = eta ? new Date(eta) : pkg.eta;
-        pkg.last_updated = new Date(timestamp);
+        pkg.last_updated = parsedTimestamp;
       }
-      pkg.events.push(event);
     }
 
     await pkg.save();
     res.status(200).json({ message: 'Update successful' });
   } catch (err) {
-    console.error(err);
+    console.error('Update error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

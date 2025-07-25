@@ -1,18 +1,17 @@
 const express = require('express');
 const router = express.Router();
 const Package = require('../models/Package');
+const auth = require('../middleware/auth');
 
-// POST: Ingest courier update
-router.post('/update', async (req, res) => {
+// POST: Courier Update (Protected)
+router.post('/update', auth, async (req, res) => {
   const { package_id, status, lat, lon, timestamp, note, eta } = req.body;
 
-  // Validate required fields
   if (!package_id || !status || !timestamp) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
   const parsedTimestamp = new Date(timestamp);
-
   const event = {
     status,
     lat,
@@ -26,7 +25,6 @@ router.post('/update', async (req, res) => {
     let pkg = await Package.findOne({ package_id });
 
     if (!pkg) {
-      // New package
       pkg = new Package({
         package_id,
         current_status: status,
@@ -37,18 +35,12 @@ router.post('/update', async (req, res) => {
         last_updated: parsedTimestamp,
       });
     } else {
-      // Check for duplicate (same timestamp + status)
       const isDuplicate = pkg.events.some(
-        (e) =>
-          new Date(e.event_timestamp).getTime() === parsedTimestamp.getTime() &&
-          e.status === status
+        e => new Date(e.event_timestamp).getTime() === parsedTimestamp.getTime() && e.status === status
       );
 
-      if (!isDuplicate) {
-        pkg.events.push(event);
-      }
+      if (!isDuplicate) pkg.events.push(event);
 
-      // Only update current status if event is newer
       if (parsedTimestamp > new Date(pkg.last_updated)) {
         pkg.current_status = status;
         pkg.lat = lat;
@@ -56,6 +48,17 @@ router.post('/update', async (req, res) => {
         pkg.eta = eta ? new Date(eta) : pkg.eta;
         pkg.last_updated = parsedTimestamp;
       }
+    }
+
+    // Alert if stuck
+    const minutesSinceUpdate = (Date.now() - new Date(pkg.last_updated).getTime()) / 60000;
+    if (minutesSinceUpdate > 30 && !pkg.alerts.some(a => a.message.includes('stuck'))) {
+      pkg.is_stuck = true;
+      pkg.alerts.push({
+        package_id,
+        triggered_at: new Date(),
+        message: `Package ${package_id} might be stuck (no update for >30 mins)`,
+      });
     }
 
     await pkg.save();
@@ -66,27 +69,18 @@ router.post('/update', async (req, res) => {
   }
 });
 
-// GET: All active packages
+// GET: Packages
 router.get('/', async (req, res) => {
-  try {
-    const packages = await Package.find({
-      last_updated: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-    });
-    res.json(packages);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch packages' });
-  }
+  const recent = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const packages = await Package.find({ last_updated: { $gte: recent } });
+  res.json(packages);
 });
 
-// GET: Package detail
+// GET: Package Detail
 router.get('/:id', async (req, res) => {
-  try {
-    const pkg = await Package.findOne({ package_id: req.params.id });
-    if (!pkg) return res.status(404).json({ error: 'Package not found' });
-    res.json(pkg);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch package' });
-  }
+  const pkg = await Package.findOne({ package_id: req.params.id });
+  if (!pkg) return res.status(404).json({ error: 'Not found' });
+  res.json(pkg);
 });
 
 module.exports = router;

@@ -1,23 +1,29 @@
+// === File: server/routes/packages.js ===
 const express = require('express');
 const router = express.Router();
 const Package = require('../models/Package');
-const auth = require('../middleware/auth');
+const dotenv = require('dotenv');
+dotenv.config();
 
-// POST: Courier Update (Protected)
-router.post('/update', auth, async (req, res) => {
-  const { package_id, status, lat, lon, timestamp, note, eta } = req.body;
+// POST: Ingest courier update
+router.post('/update', async (req, res) => {
+  const { package_id, status, lat, lon, note, eta, secret } = req.body;
 
-  if (!package_id || !status || !timestamp) {
+  if (!package_id || !status || !secret) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  const parsedTimestamp = new Date(timestamp);
+  if (secret !== process.env.SECRET_KEY) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid secret' });
+  }
+
+  const timestamp = new Date();
   const event = {
     status,
     lat,
     lon,
     note,
-    event_timestamp: parsedTimestamp,
+    event_timestamp: timestamp,
     received_at: new Date(),
   };
 
@@ -32,33 +38,20 @@ router.post('/update', auth, async (req, res) => {
         lon,
         eta: eta ? new Date(eta) : null,
         events: [event],
-        last_updated: parsedTimestamp,
+        last_updated: timestamp,
       });
     } else {
       const isDuplicate = pkg.events.some(
-        e => new Date(e.event_timestamp).getTime() === parsedTimestamp.getTime() && e.status === status
+        (e) => new Date(e.event_timestamp).getTime() === timestamp.getTime() && e.status === status
       );
-
       if (!isDuplicate) pkg.events.push(event);
-
-      if (parsedTimestamp > new Date(pkg.last_updated)) {
+      if (timestamp > new Date(pkg.last_updated)) {
         pkg.current_status = status;
         pkg.lat = lat;
         pkg.lon = lon;
         pkg.eta = eta ? new Date(eta) : pkg.eta;
-        pkg.last_updated = parsedTimestamp;
+        pkg.last_updated = timestamp;
       }
-    }
-
-    // Alert if stuck
-    const minutesSinceUpdate = (Date.now() - new Date(pkg.last_updated).getTime()) / 60000;
-    if (minutesSinceUpdate > 30 && !pkg.alerts.some(a => a.message.includes('stuck'))) {
-      pkg.is_stuck = true;
-      pkg.alerts.push({
-        package_id,
-        triggered_at: new Date(),
-        message: `Package ${package_id} might be stuck (no update for >30 mins)`,
-      });
     }
 
     await pkg.save();
@@ -69,18 +62,25 @@ router.post('/update', auth, async (req, res) => {
   }
 });
 
-// GET: Packages
 router.get('/', async (req, res) => {
-  const recent = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const packages = await Package.find({ last_updated: { $gte: recent } });
-  res.json(packages);
+  try {
+    const packages = await Package.find({
+      last_updated: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+    });
+    res.json(packages);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch packages' });
+  }
 });
 
-// GET: Package Detail
 router.get('/:id', async (req, res) => {
-  const pkg = await Package.findOne({ package_id: req.params.id });
-  if (!pkg) return res.status(404).json({ error: 'Not found' });
-  res.json(pkg);
+  try {
+    const pkg = await Package.findOne({ package_id: req.params.id });
+    if (!pkg) return res.status(404).json({ error: 'Package not found' });
+    res.json(pkg);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch package' });
+  }
 });
 
 module.exports = router;

@@ -93,16 +93,16 @@ npm run dev
 
 ## API Endpoints
 
-POST /api/packages/create
+POST /api/packages/create-
 Dispatcher creates a new package
 Required: package_id, lat, lon, secret
 
-POST /api/packages/update
+POST /api/packages/update-
 Courier updates status
 Required: package_id, status, lat, lon, secret
 
-GET /api/packages
+GET /api/packages-
 Fetch all packages updated in last 24h
 
-GET /api/packages/:id
+GET /api/packages/:id-
 Fetch full history of a package

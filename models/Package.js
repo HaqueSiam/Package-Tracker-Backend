@@ -1,4 +1,3 @@
-// === File: server/models/Package.js ===
 const mongoose = require('mongoose');
 
 const EventSchema = new mongoose.Schema({

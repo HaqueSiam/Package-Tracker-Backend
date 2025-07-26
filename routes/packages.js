@@ -1,11 +1,26 @@
-// === File: server/routes/packages.js ===
 const express = require('express');
 const router = express.Router();
 const Package = require('../models/Package');
 
+const STATUS_ORDER = [
+  'CREATED',
+  'PICKED_UP',
+  'IN_TRANSIT',
+  'OUT_FOR_DELIVERY',
+  'DELIVERED',
+  'EXCEPTION',
+  'CANCELLED',
+];
+
 // POST: Courier update existing package
 router.post('/update', async (req, res) => {
-  const { package_id, status, lat, lon, note, eta, secret } = req.body;
+  let { package_id, status, lat, lon, note, eta, secret } = req.body;
+
+  // Trim all string inputs
+  package_id = package_id?.trim();
+  status = status?.trim();
+  note = note?.trim();
+  secret = secret?.trim();
 
   if (!package_id || !status || !secret) {
     return res.status(400).json({ error: 'Missing required fields' });
@@ -26,39 +41,32 @@ router.post('/update', async (req, res) => {
   };
 
   try {
-    const allowedStatuses = ['PICKED_UP', 'IN_TRANSIT', 'OUT_FOR_DELIVERY', 'DELIVERED', 'EXCEPTION', 'CANCELLED'];
-    if (!allowedStatuses.includes(status)) {
+    const allowed = STATUS_ORDER.filter(s => s !== 'CREATED');
+    if (!allowed.includes(status)) {
       return res.status(400).json({ error: 'Invalid status for courier' });
     }
 
-    let pkg = await Package.findOne({ package_id });
-    if (!pkg) {
-      return res.status(404).json({ error: 'Package not found' });
-    }
+    const pkg = await Package.findOne({ package_id });
+    if (!pkg) return res.status(404).json({ error: 'Package not found' });
 
-    const statusOrder = [
-      'CREATED',
-      'PICKED_UP',
-      'IN_TRANSIT',
-      'OUT_FOR_DELIVERY',
-      'DELIVERED',
-      'EXCEPTION',
-      'CANCELLED'
-    ];
+    const currentIndex = STATUS_ORDER.indexOf(pkg.current_status);
+    const nextIndex = STATUS_ORDER.indexOf(status);
 
-    const currentIndex = statusOrder.indexOf(pkg.current_status);
-    const nextIndex = statusOrder.indexOf(status);
+    // Exception/CANCELLED allow mutual switch
+    const isSwitchable =
+      (pkg.current_status === 'EXCEPTION' && status === 'CANCELLED') ||
+      (pkg.current_status === 'CANCELLED' && status === 'EXCEPTION');
 
-    if (nextIndex <= currentIndex) {
+    if (nextIndex <= currentIndex && !isSwitchable) {
       return res.status(400).json({ error: 'Invalid status progression' });
     }
 
     const isDuplicate = pkg.events.some(
-      (e) => new Date(e.event_timestamp).getTime() === timestamp.getTime() && e.status === status
+      e => new Date(e.event_timestamp).getTime() === timestamp.getTime() && e.status === status
     );
-
     if (!isDuplicate) pkg.events.push(event);
 
+    // Always update with latest
     pkg.current_status = status;
     pkg.lat = lat;
     pkg.lon = lon;
@@ -73,10 +81,13 @@ router.post('/update', async (req, res) => {
   }
 });
 
-
 // POST: Dispatcher creates new package
 router.post('/create', async (req, res) => {
-  const { package_id, lat, lon, eta, secret } = req.body;
+  let { package_id, lat, lon, eta, note, secret } = req.body;
+
+  package_id = package_id?.trim();
+  note = note?.trim();
+  secret = secret?.trim();
 
   if (!package_id || !secret) {
     return res.status(400).json({ error: 'Missing required fields' });
@@ -100,7 +111,7 @@ router.post('/create', async (req, res) => {
       status: 'CREATED',
       lat,
       lon,
-      note: 'Package created',
+      note: note || 'Package created',
       event_timestamp: timestamp,
       received_at: new Date(),
     };
@@ -135,7 +146,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET: Package detail
+// GET: Package detail by ID
 router.get('/:id', async (req, res) => {
   try {
     const pkg = await Package.findOne({ package_id: req.params.id });

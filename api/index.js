@@ -1,13 +1,7 @@
-
+// api/index.js
 import app from '../index.js';
 
-
-let isInitialized = false;
-
-export default async function handler(req, res) {
-  if (!isInitialized) {
-    
-    isInitialized = true;
-  }
-  app(req, res);
+// Patch Express app into a handler
+export default function handler(req, res) {
+  return app(req, res);
 }

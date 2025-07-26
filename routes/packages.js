@@ -2,8 +2,8 @@
 const express = require('express');
 const router = express.Router();
 const Package = require('../models/Package');
-const dotenv = require('dotenv');
-dotenv.config();
+// const dotenv = require('dotenv');
+// dotenv.config();
 
 // POST: Ingest courier update
 router.post('/update', async (req, res) => {
